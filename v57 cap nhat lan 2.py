@@ -2,111 +2,112 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import time
-import warnings
 
-# Tắt các cảnh báo không cần thiết
-warnings.filterwarnings("ignore")
-
-# Thử import thư viện vnstock
+# Thử import vnstock3
 try:
-    from vnstock import stock_historical_data
+    from vnstock3 import Vnstock
 except ImportError:
-    st.error("❌ Chưa cài đặt vnstock. Hãy kiểm tra lại file requirements.txt")
+    st.error("❌ Thiếu thư viện vnstock3. Hãy kiểm tra file requirements.txt")
     st.stop()
 
-# --- CẤU HÌNH ---
-st.set_page_config(page_title="VnStock Screener", layout="wide")
-st.title("🚀 Bộ Lọc Chứng Khoán Multi-TF")
-st.caption("Phiên bản tự động sửa lỗi kết nối - Tương thích Streamlit Cloud")
+st.set_page_config(page_title="VnStock Consesus", layout="wide")
+st.title("🚀 Bộ Lọc Chứng Khoán Multi-TF (Bản Vnstock3)")
 
-# Danh sách mã (Rút gọn để quét nhanh, bạn có thể thêm lại sau)
-SYMBOLS = [
-    'ACB','BID','CTG','FPT','GAS','GVR','HDB','HPG','MBB','MSN','MWG','PLX','POW','SAB',
-    'SHB','SSB','SSI','STB','TCB','TPB','VCB','VHM','VIB','VIC','VJC','VNM','VPB','VRE','LPB','DGC',
-    'DPM','DCM','VGC','PVD','PVS','NLG','KDH','KBC','IDC','SZC','GMD','HAH','OIL','FRT','PNJ'
-]
+# --- CẤU HÌNH DANH SÁCH MÃ ---
+SYMBOLS = ['ACB','BID','CTG','FPT','GAS','GVR','HDB','HPG','MBB','MSN','MWG','SSI','STB','TCB','VCB','VHM','VIC','VNM','VPB','VRE']
 
-# --- HÀM TÍNH TOÁN RSI ---
-def calculate_signals(df):
+# --- HÀM TÍNH RSI ---
+def calculate_rsi_consensus(df):
     if df is None or len(df) < 50: return 0, 0
     try:
-        # Ép tên cột về chữ thường để tránh lỗi Vnstock lúc hoa lúc thường
         df.columns = [c.lower() for c in df.columns]
         close = df['close']
-        
         delta = close.diff()
-        gain = delta.clip(lower=0)
-        loss = -delta.clip(upper=0)
-        avg_gain = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-        avg_loss = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+        gain = (delta.where(delta > 0, 0)).ewm(alpha=1/14, adjust=False).mean()
+        loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
         
-        rsi = 100 - (100 / (1 + avg_gain / avg_loss))
-        ma9 = rsi.rolling(9).mean()
-        ma45 = rsi.rolling(45).mean()
+        rsi_ma9 = rsi.rolling(9).mean()
+        rsi_ma45 = rsi.rolling(45).mean()
         
-        last_rsi, last_ma9, last_ma45 = rsi.iloc[-1], ma9.iloc[-1], ma45.iloc[-1]
-        
-        if last_rsi > last_ma9 and last_rsi > last_ma45: return 1, close.iloc[-1]
-        if last_rsi < last_ma9 and last_rsi < last_ma45: return -1, close.iloc[-1]
+        curr_rsi = rsi.iloc[-1]
+        if curr_rsi > rsi_ma9.iloc[-1] and curr_rsi > rsi_ma45.iloc[-1]: return 1, close.iloc[-1]
+        if curr_rsi < rsi_ma9.iloc[-1] and curr_rsi < rsi_ma45.iloc[-1]: return -1, close.iloc[-1]
     except: pass
     return 0, 0
 
-def resample_data(df, rule):
-    if df is None or len(df) < 2: return None
+# --- HÀM GỘP NẾN ---
+def resample_ohlc(df, rule):
     try:
-        df = df.copy()
         df.columns = [c.lower() for c in df.columns]
         df['time'] = pd.to_datetime(df['time'])
         df.set_index('time', inplace=True)
-        # Gộp nến
         res = df.resample(rule).agg({'open':'first', 'high':'max', 'low':'min', 'close':'last', 'volume':'sum'})
         return res.dropna().reset_index()
     except: return None
 
-# --- HÀM LẤY DỮ LIỆU ---
-def get_data(symbol, res, days):
-    # Thử nguồn TCBS trước (ổn nhất trên Cloud)
-    start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-    end_date = datetime.now().strftime('%Y-%m-%d')
-    try:
-        df = stock_historical_data(symbol=symbol, start_date=start_date, end_date=end_date, 
-                                 resolution=res, type='stock', source='tcbs')
-        if df is not None and not df.empty: return df
-    except: pass
-    return None
-
-# --- GIAO DIỆN QUÉT ---
-if st.button("🔍 BẮT ĐẦU QUÉT DỮ LIỆU"):
-    results = {}
+# --- GIAO DIỆN CHÍNH ---
+if st.button("🔍 BẮT ĐẦU QUÉT"):
+    results = []
     progress_bar = st.progress(0)
-    status_text = st.empty()
+    log_area = st.empty()
     
+    # Khởi tạo Vnstock
+    stock = Vnstock().stock(source='TCBS')
+
     for i, sym in enumerate(SYMBOLS):
-        status_text.write(f"🔄 Đang quét: **{sym}** ({i+1}/{len(SYMBOLS)})")
+        log_area.info(f"正在 quét mã: **{sym}**...")
         progress_bar.progress((i + 1) / len(SYMBOLS))
         
-        # Lấy data
-        df_h = get_data(sym, '1H', 60)
-        df_d = get_data(sym, '1D', 600) # Lấy xa để đủ nến cho khung Tuần
-        
-        if df_h is not None and df_d is not None:
-            tfs = {
-                '1h': df_h,
-                '4h': resample_data(df_h, '4H'),
-                '1d': df_d,
-                '3d': resample_data(df_d, '3D'),
-                '1w': resample_data(df_d, 'W-MON')
-            }
+        try:
+            # Lấy dữ liệu 1H và 1D
+            df_h = stock.quote.history(symbol=sym, interval='1H', count=500)
+            df_d = stock.quote.history(symbol=sym, interval='1D', count=500)
+
+            if df_h is not None and not df_h.empty and df_d is not None:
+                # Tạo các khung thời gian
+                tfs = {
+                    '1h': df_h,
+                    '4h': resample_ohlc(df_h, '4H'),
+                    '1d': df_d,
+                    '3d': resample_ohlc(df_d, '3D'),
+                    '1w': resample_ohlc(df_d, 'W-MON')
+                }
+                
+                sigs = {name: calculate_rsi_consensus(tf_df)[0] for name, tf_df in tfs.items()}
+                price = df_d['close'].iloc[-1] if 'close' in df_d.columns else df_d['Close'].iloc[-1]
+                
+                buy_found = []
+                sell_found = []
+                
+                pairs = [('1h', '4h'), ('4h', '1d'), ('1d', '3d'), ('3d', '1w')]
+                for tf1, tf2 in pairs:
+                    if sigs[tf1] == sigs[tf2] and sigs[tf1] != 0:
+                        lbl = f"{tf1.upper()}-{tf2.upper()}"
+                        if sigs[tf1] == 1: buy_found.append(lbl)
+                        else: sell_found.append(lbl)
+                
+                if buy_found or sell_found:
+                    p_final = price if price > 1000 else price * 1000
+                    results.append({
+                        "MÃ": sym,
+                        "GIÁ": f"{p_final:,.0f}",
+                        "MUA (🚀)": ", ".join(buy_found),
+                        "BÁN (🔻)": ", ".join(sell_found)
+                    })
             
-            sigs = {name: calculate_signals(tf_df)[0] for name, tf_df in tfs.items()}
-            price = df_d['close'].iloc[-1] if 'close' in df_d.columns else df_d['Close'].iloc[-1]
+            # Nghỉ ngắn để né chặn IP
+            time.sleep(0.5)
             
-            pairs = [('1h', '4h'), ('4h', '1d'), ('1d', '3d'), ('3d', '1w')]
-            for tf1, tf2 in pairs:
-                if sigs[tf1] == sigs[tf2] and sigs[tf1] != 0:
-                    if sym not in results:
-                        p_show = price if price > 1000 else price * 1000
-                        results[sym] = {'p': p_show, 'buy': [], 'sell': []}
-                    
-                    lbl = f"{tf1.upper()}-{tf2.upper()}"
-                    if sigs[tf1] =
+        except Exception as e:
+            st.error(f"⚠️ Lỗi tại mã {sym}: {str(e)}")
+            if "403" in str(e) or "Forbidden" in str(e):
+                st.warning("👉 IP của Streamlit Cloud đã bị TCBS chặn. Hãy thử lại sau hoặc liên hệ Admin.")
+                break
+
+    log_area.empty()
+    if results:
+        st.dataframe(pd.DataFrame(results), use_container_width=True, hide_index=True)
+    else:
+        st.warning("Không tìm thấy tín hiệu hoặc lỗi dữ liệu.")
