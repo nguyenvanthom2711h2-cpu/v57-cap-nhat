@@ -3,21 +3,23 @@ import pandas as pd
 from datetime import datetime, timedelta
 import warnings
 import time
+import random
 
-# Import vnstock - Sử dụng hàm historical data trực tiếp
+# Import vnstock
 try:
     from vnstock import stock_historical_data
 except ImportError:
-    st.error("Lỗi: Không tìm thấy thư viện vnstock. Vui lòng kiểm tra requirements.txt")
+    st.error("Thiếu thư viện vnstock trong requirements.txt")
 
 warnings.filterwarnings("ignore")
 
 # ==========================================
 # CẤU HÌNH GIAO DIỆN
 # ==========================================
-st.set_page_config(page_title="Stock Screener Pro", layout="wide")
-st.title("🚀 Bộ Lọc Cổ Phiếu Đồng Thuận Multi-TF")
+st.set_page_config(page_title="Stock Web Screener", layout="wide")
+st.title("🚀 Bộ Lọc Chứng Khoán Multi-TF (Bản Web)")
 
+# Danh sách mã rút gọn các mã lỗi hoặc dùng toàn bộ
 SYMBOLS = [
     'ACB','BCM','BID','BVH','CTG','FPT','GAS','GVR','HDB','HPG','MBB','MSN','MWG','PLX','POW','SAB',
     'SHB','SSB','SSI','STB','TCB','TPB','VCB','VHM','VIB','VIC','VJC','VNM','VPB','VRE','LPB','DGC',
@@ -29,13 +31,12 @@ SYMBOLS = [
 SCAN_PAIRS = [('1h', '4h'), ('4h', '1d'), ('1d', '3d'), ('3d', '1w')]
 
 # ==========================================
-# HÀM TÍNH TOÁN
+# HÀM TÍNH TOÁN (Tối ưu cho Web)
 # ==========================================
 def calculate_indicators(df):
     if df is None or len(df) < 50: return 0, 0
     try:
         df = df.copy()
-        # Đảm bảo tên cột chuẩn cho tính toán
         delta = df['close'].diff()
         gain = delta.clip(lower=0)
         loss = -delta.clip(upper=0)
@@ -62,91 +63,84 @@ def resample_stock_data(df, rule):
     except: return None
 
 # ==========================================
-# THỰC THI QUÉT
+# CƠ CHẾ LẤY DỮ LIỆU "SỐNG SÓT" TRÊN WEB
 # ==========================================
-if st.button("🚀 BẮT ĐẦU QUÉT TOÀN BỘ MÃ"):
-    summary_data = {}
-    log_area = st.empty()
-    progress_bar = st.progress(0)
+def get_data_safe(symbol, resolution, days_back):
+    """Thử lấy dữ liệu nhiều lần nếu gặp lỗi kết nối"""
+    start_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+    end_date = datetime.now().strftime('%Y-%m-%d')
     
-    total_symbols = len(SYMBOLS)
-    
-    # Sử dụng nguồn 'kbs' thay vì 'vci' để tránh Connection Error
-    SOURCE = 'kbs'
-
-    for idx, symbol in enumerate(SYMBOLS):
-        progress_bar.progress((idx + 1) / total_symbols)
-        log_area.code(f"🔄 Đang xử lý mã: {symbol} ({idx+1}/{total_symbols})")
-
+    for _ in range(3): # Thử lại tối đa 3 lần
         try:
-            # Lấy dữ liệu 1H (Intraday)
-            # Lưu ý: Một số nguồn có thể dùng tham số resolution khác nhau, ở đây ta dùng '1H'
-            df_h = stock_historical_data(symbol=symbol, 
-                                       start_date=(datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d'), 
-                                       end_date=datetime.now().strftime('%Y-%m-%d'), 
-                                       resolution='1H', type='stock', source=SOURCE)
-            
-            # Lấy dữ liệu 1D
-            df_d = stock_historical_data(symbol=symbol, 
-                                       start_date='2022-01-01', 
-                                       end_date=datetime.now().strftime('%Y-%m-%d'), 
-                                       resolution='1D', type='stock', source=SOURCE)
+            df = stock_historical_data(symbol=symbol, 
+                                       start_date=start_date, 
+                                       end_date=end_date, 
+                                       resolution=resolution, 
+                                       source='tcbs') # Dùng TCBS ổn định nhất cho Web
+            if df is not None and not df.empty:
+                return df
+        except:
+            time.sleep(random.uniform(1, 2)) # Nghỉ ngẫu nhiên để né bot detection
+    return None
 
-            if df_h is None or df_h.empty or df_d is None or df_d.empty:
-                continue
-
-            # Tạo danh sách các khung thời gian
+# ==========================================
+# THỰC THI
+# ==========================================
+if st.button("🚀 BẮT ĐẦU QUÉT"):
+    summary_data = {}
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    total = len(SYMBOLS)
+    
+    for idx, sym in enumerate(SYMBOLS):
+        progress_bar.progress((idx + 1) / total)
+        status_text.code(f"正在扫描 (Đang quét): {sym}...")
+        
+        # Lấy dữ liệu
+        df_h = get_data_safe(sym, '1H', 60)
+        df_d = get_data_safe(sym, '1D', 500)
+        
+        if df_h is not None and df_d is not None:
             tfs = {
                 '1h': df_h,
-                '4h': resample_stock_data(df_h, '4h'),
+                '4h': resample_stock_data(df_h, '4H'),
                 '1d': df_d,
                 '3d': resample_stock_data(df_d, '3D'),
                 '1w': resample_stock_data(df_d, 'W-MON')
             }
-
-            # Tính tín hiệu
-            signals = {}
-            current_price = df_h['close'].iloc[-1]
-            for tf_name, df_tf in tfs.items():
-                sig, _ = calculate_indicators(df_tf)
-                signals[tf_name] = sig
-
-            # Kiểm tra đồng thuận
-            for tf1, tf2 in SCAN_PAIRS:
-                s1, s2 = signals.get(tf1, 0), signals.get(tf2, 0)
-                if s1 == s2 and s1 != 0:
-                    label = f"{tf1.upper()}-{tf2.upper()}"
-                    price_val = current_price if current_price > 1000 else current_price * 1000
-                    
-                    if symbol not in summary_data:
-                        summary_data[symbol] = {'price': price_val, 'buy': [], 'sell': []}
-                    
-                    if s1 == 1: summary_data[symbol]['buy'].append(label)
-                    else: summary_data[symbol]['sell'].append(label)
             
-            # Nghỉ 0.5 giây giữa mỗi mã để tránh bị Connection Error
-            time.sleep(0.5)
+            signals = {}
+            for name, df_tf in tfs.items():
+                sig, _ = calculate_indicators(df_tf)
+                signals[name] = sig
+            
+            last_p = df_h['close'].iloc[-1]
+            
+            for tf1, tf2 in SCAN_PAIRS:
+                if signals.get(tf1) == signals.get(tf2) and signals.get(tf1) != 0:
+                    if sym not in summary_data:
+                        summary_data[sym] = {'p': last_p, 'buy': [], 'sell': []}
+                    
+                    label = f"{tf1.upper()}-{tf2.upper()}"
+                    if signals[tf1] == 1: summary_data[sym]['buy'].append(label)
+                    else: summary_data[sym]['sell'].append(label)
+        
+        # Quan trọng: Nghỉ để không bị khóa IP
+        time.sleep(0.3)
 
-        except Exception as e:
-            # Nếu lỗi kết nối, nghỉ lâu hơn một chút
-            if "Connection" in str(e) or "Retry" in str(e):
-                log_area.warning(f"⚠️ {symbol} bị nghẽn mạng, đang thử chờ nghỉ...")
-                time.sleep(2)
-            continue
-
-    log_area.empty()
+    status_text.empty()
     
     if summary_data:
-        st.subheader(f"📊 Bảng Kết Quả Tổng Hợp ({datetime.now().strftime('%H:%M:%S')})")
-        rows = []
-        for s in sorted(summary_data.keys()):
-            d = summary_data[s]
-            rows.append({
+        st.subheader("📊 Kết Quả Đồng Thuận")
+        final_df = []
+        for s, d in summary_data.items():
+            final_df.append({
                 "MÃ": s,
-                "GIÁ": f"{d['price']:,.0f}",
-                "ĐỒNG THUẬN MUA (🚀)": ", ".join(d['buy']) if d['buy'] else "-",
-                "ĐỒNG THUẬN BÁN (🔻)": ", ".join(d['sell']) if d['sell'] else "-"
+                "GIÁ": f"{d['p'] if d['p'] > 1000 else d['p']*1000:,.0f}",
+                "MUA (🚀)": ", ".join(d['buy']) if d['buy'] else "-",
+                "BÁN (🔻)": ", ".join(d['sell']) if d['sell'] else "-"
             })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(final_df), use_container_width=True, hide_index=True)
     else:
-        st.warning("⚠️ Không tìm thấy mã nào đạt điều kiện hoặc dữ liệu tạm thời bị gián đoạn. Hãy thử lại sau ít phút.")
+        st.warning("Không tìm thấy tín hiệu hoặc lỗi kết nối IP. Hãy thử lại.")
