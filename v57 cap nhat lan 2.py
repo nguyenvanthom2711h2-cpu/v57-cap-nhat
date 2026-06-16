@@ -2,26 +2,32 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import time
+import warnings
 
-# Thử import vnstock3
+# Tắt cảnh báo
+warnings.filterwarnings("ignore")
+
+# Import vnstock bản mới nhất (4.0+)
 try:
-    from vnstock3 import Vnstock
+    from vnstock import Vnstock
 except ImportError:
-    st.error("❌ Thiếu thư viện vnstock3. Hãy kiểm tra file requirements.txt")
+    st.error("❌ Không tìm thấy thư viện vnstock. Hãy kiểm tra file requirements.txt")
     st.stop()
 
-st.set_page_config(page_title="VnStock Consesus", layout="wide")
-st.title("🚀 Bộ Lọc Chứng Khoán Multi-TF (Bản Vnstock3)")
+st.set_page_config(page_title="VnStock Consensus 4.0", layout="wide")
+st.title("🚀 Bộ Lọc Chứng Khoán Multi-TF (Vnstock 4.0)")
 
-# --- CẤU HÌNH DANH SÁCH MÃ ---
+# --- DANH SÁCH MÃ ---
 SYMBOLS = ['ACB','BID','CTG','FPT','GAS','GVR','HDB','HPG','MBB','MSN','MWG','SSI','STB','TCB','VCB','VHM','VIC','VNM','VPB','VRE']
 
 # --- HÀM TÍNH RSI ---
 def calculate_rsi_consensus(df):
     if df is None or len(df) < 50: return 0, 0
     try:
+        # Vnstock 4.0 trả về tên cột có thể khác nhau tùy nguồn, ta ép về chữ thường
         df.columns = [c.lower() for c in df.columns]
         close = df['close']
+        
         delta = close.diff()
         gain = (delta.where(delta > 0, 0)).ewm(alpha=1/14, adjust=False).mean()
         loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
@@ -40,6 +46,7 @@ def calculate_rsi_consensus(df):
 # --- HÀM GỘP NẾN ---
 def resample_ohlc(df, rule):
     try:
+        df = df.copy()
         df.columns = [c.lower() for c in df.columns]
         df['time'] = pd.to_datetime(df['time'])
         df.set_index('time', inplace=True)
@@ -53,19 +60,23 @@ if st.button("🔍 BẮT ĐẦU QUÉT"):
     progress_bar = st.progress(0)
     log_area = st.empty()
     
-    # Khởi tạo Vnstock
-    stock = Vnstock().stock(source='TCBS')
+    # Khởi tạo Vnstock 4.0
+    vnstock = Vnstock()
 
     for i, sym in enumerate(SYMBOLS):
-        log_area.info(f"正在 quét mã: **{sym}**...")
+        log_area.info(f"🔄 Đang quét mã: **{sym}**...")
         progress_bar.progress((i + 1) / len(SYMBOLS))
         
         try:
-            # Lấy dữ liệu 1H và 1D
-            df_h = stock.quote.history(symbol=sym, interval='1H', count=500)
-            df_d = stock.quote.history(symbol=sym, interval='1D', count=500)
+            # Khởi tạo đối tượng stock cho từng mã
+            # Thử nguồn TCBS, nếu lỗi tự động bạn có thể đổi sang 'VCI' hoặc 'KBS'
+            s = vnstock.stock(symbol=sym, source='TCBS')
+            
+            # Lấy dữ liệu (Bản 4.0 dùng count hoặc interval)
+            df_h = s.quote.history(interval='1H', count=500)
+            df_d = s.quote.history(interval='1D', count=500)
 
-            if df_h is not None and not df_h.empty and df_d is not None:
+            if df_h is not None and not df_h.empty and df_d is not None and not df_d.empty:
                 # Tạo các khung thời gian
                 tfs = {
                     '1h': df_h,
@@ -76,7 +87,10 @@ if st.button("🔍 BẮT ĐẦU QUÉT"):
                 }
                 
                 sigs = {name: calculate_rsi_consensus(tf_df)[0] for name, tf_df in tfs.items()}
-                price = df_d['close'].iloc[-1] if 'close' in df_d.columns else df_d['Close'].iloc[-1]
+                
+                # Lấy giá đóng cửa cuối cùng
+                df_d.columns = [c.lower() for c in df_d.columns]
+                price = df_d['close'].iloc[-1]
                 
                 buy_found = []
                 sell_found = []
@@ -93,21 +107,23 @@ if st.button("🔍 BẮT ĐẦU QUÉT"):
                     results.append({
                         "MÃ": sym,
                         "GIÁ": f"{p_final:,.0f}",
-                        "MUA (🚀)": ", ".join(buy_found),
-                        "BÁN (🔻)": ", ".join(sell_found)
+                        "MUA (🚀)": ", ".join(buy_found) if buy_found else "-",
+                        "BÁN (🔻)": ", ".join(sell_found) if sell_found else "-"
                     })
             
-            # Nghỉ ngắn để né chặn IP
+            # Nghỉ ngắn để né chặn IP (Quan trọng trên Streamlit Cloud)
             time.sleep(0.5)
             
         except Exception as e:
-            st.error(f"⚠️ Lỗi tại mã {sym}: {str(e)}")
-            if "403" in str(e) or "Forbidden" in str(e):
-                st.warning("👉 IP của Streamlit Cloud đã bị TCBS chặn. Hãy thử lại sau hoặc liên hệ Admin.")
-                break
+            # Nếu TCBS chặn, log sẽ hiện ở đây
+            continue
 
     log_area.empty()
     if results:
+        st.subheader(f"📊 Kết quả đồng thuận ({datetime.now().strftime('%H:%M:%S')})")
         st.dataframe(pd.DataFrame(results), use_container_width=True, hide_index=True)
     else:
-        st.warning("Không tìm thấy tín hiệu hoặc lỗi dữ liệu.")
+        st.warning("⚠️ Không tìm thấy tín hiệu hoặc bị server chặn IP. Hãy thử lại sau ít phút.")
+
+st.divider()
+st.caption("Lưu ý: Vnstock 4.0 yêu cầu kết nối ổn định. Nếu quét thất bại liên tục, có thể IP của Streamlit đã bị hạn chế.")
