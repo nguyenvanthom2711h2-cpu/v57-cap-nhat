@@ -1,0 +1,5 @@
+pandas
+pyTelegramBotAPI
+tabulate
+vnstock
+streamlit
