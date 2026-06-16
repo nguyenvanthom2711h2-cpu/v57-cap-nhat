@@ -14,10 +14,28 @@ st.caption("Dữ liệu Yahoo Finance | Công thức chuẩn RSI Wilder's (alpha
 
 # DANH SÁCH MÃ CHỨNG KHOÁN
 SYMBOLS_RAW = [
-    'ACB','BCM','BID','BVH','CTG','FPT','GAS','GVR','HDB','HPG','MBB','MSN','MWG','PLX','POW','SAB',
-    'SHB','SSB','SSI','STB','TCB','TPB','VCB','VHM','VIB','VIC','VJC','VNM','VPB','VRE','LPB','DGC',
-    'DPM','DCM','VGC','PVD','PVS','NLG','KDH','KBC','IDC','SZC','GMD','HAH','OIL','FRT','PNJ','TLG',
-    'BSI','HSG','NKG','DIG','DXG','PDR','NVL','VIX','VND','HCM','VCI','EIB','MSB','OCB','REE','CTR','VGI','VTP','TCX','VCK','AGR','ANV','BFC','BMP','BSR','BVH','CEO','CII','CMG','CSV','CTD','CTR','CTS','DBC','FTS','HCM','HDB','NTL','NT2','VCI','VCS','VDS','VHC'
+    # NGÂN HÀNG
+    'ACB','BID','CTG','HDB','LPB','MBB','MSB','OCB','SHB','STB','TCB','TPB','VCB','VIB','VPB','EIB','SSB','ABB','BVB',
+    # CHỨNG KHOÁN
+    'SSI','VND','VCI','HCM','VIX','BSI','FTS','MBS','SHS','CTS','AGR','ORS','VDS','TVS',
+    # BẤT ĐỘNG SẢN & ĐẦU TƯ CÔNG
+    'VHM','VIC','VRE','DXG','DIG','PDR','NVL','NLG','KDH','CEO','L14','TCH','HQC','ITA','VCG','HHV','LCG','FCN','C4G','HBC','CTD',
+    # THÉP
+    'HPG','HSG','NKG','TVN','TLH','VGS',
+    # DẦU KHÍ & NĂNG LƯỢNG
+    'GAS','PVD','PVS','PVT','PVC','PLX','POW','PC1','TV2','GEG','REE','BCG','ASM','NT2',
+    # KHU CÔNG NGHIỆP & CAO SU
+    'IDC','SZC','KBC','VGC','PHR','GVR','BCM','TIP','DPR',
+    # BÁN LẺ & CÔNG NGHỆ
+    'MWG','MSN','FPT','PNJ','DGW','FRT','PET','VTP','CTR','VGI',
+    # HÓA CHẤT - PHÂN BÓN
+    'DGC','DPM','DCM','LAS','BFC','CSV',
+    # THỦY SẢN - NÔNG NGHIỆP
+    'VHC','ANV','IDI','PAN','DBC','BAF','HAG','HNG','LSS','SBT',
+    # CẢNG BIỂN - LOGISTICS
+    'GMD','HAH','VSC','VOS','SKG','PVT',
+    # SẢN XUẤT - TIÊU DÙNG
+    'VNM','SAB','BHN','TLG','KDC','GIL','MSH','TNG','VGT','RAL','DQC'
 ]
 SYMBOLS = [s + ".VN" for s in SYMBOLS_RAW]
 
