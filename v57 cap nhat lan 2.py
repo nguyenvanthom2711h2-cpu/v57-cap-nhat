@@ -1,6 +1,6 @@
+import streamlit as st
 import pandas as pd
 import telebot
-from tabulate import tabulate
 from datetime import datetime, timedelta
 import time
 import warnings
@@ -9,41 +9,32 @@ import os, sys, contextlib
 # Import vnstock
 try:
     from vnstock.api.quote import Quote
-    from vnstock.api.market import Listing
 except ImportError:
-    try:
-        from vnstock import Quote, Listing
-    except ImportError:
-        print("❌ Lỗi: Không tìm thấy vnstock. Hãy chạy: pip install vnstock -U")
-        sys.exit()
+    from vnstock import Quote
 
 warnings.filterwarnings("ignore")
 
 # ==========================================
-# 1. CẤU HÌNH (Giữ nguyên bản gốc)
+# CẤU HÌNH GIAO DIỆN WEB
 # ==========================================
-TOKEN = '8958414448:AAETDsuT0ut2gznqgvSzJbT62pgNKnlBxLE'
-CHAT_ID = '6095817110'
-bot = telebot.TeleBot(TOKEN)
+st.set_page_config(page_title="Stock Screener Multi-TF", layout="wide")
+st.title("🚀 Bộ Lọc Cổ Phiếu Đồng Thuận Multi-TF")
 
-WAIT_TIME = 900 
-MIN_VOLUME = 50000 
-last_alerts = {}
+# Sidebar cấu hình
+st.sidebar.header("Cấu hình hệ thống")
+# Để trống Token nếu không muốn dùng Telegram
+TOKEN = st.sidebar.text_input("Telegram Token", value="8958414448:AAETDsuT0ut2gznqgvSzJbT62pgNKnlBxLE", type="password")
+CHAT_ID = st.sidebar.text_input("Telegram Chat ID", value="6095817110")
 
 SYMBOLS_TO_SCAN = [
     'ACB','BCM','BID','BVH','CTG','FPT','GAS','GVR','HDB','HPG','MBB','MSN','MWG','PLX','POW','SAB',
     'SHB','SSB','SSI','STB','TCB','TPB','VCB','VHM','VIB','VIC','VJC','VNM','VPB','VRE','LPB','DGC',
     'DPM','DCM','VGC','PVD','PVS','NLG','KDH','KBC','IDC','SZC','GMD','HAH','OIL','FRT','PNJ','TLG',
     'BSI','HSG','NKG','DIG','DXG','PDR','NVL','VIX','VCK','TCX','DGW','VND','HCM','VCI','EIB','MSB',
-    'OCB','REE','CTR','VGI','VTP','VNM','KDH','NLG'
+    'OCB','REE','CTR','VGI','VTP'
 ]
 
-SCAN_PAIRS = [
-    ('1h', '4h'),
-    ('4h', '1d'),
-    ('1d', '3d'),
-    ('3d', '1w')
-]
+SCAN_PAIRS = [('1h', '4h'), ('4h', '1d'), ('1d', '3d'), ('3d', '1w')]
 
 @contextlib.contextmanager
 def mute_stdout():
@@ -54,7 +45,7 @@ def mute_stdout():
         finally: sys.stdout = old_stdout
 
 # ==========================================
-# 2. HÀM TÍNH TOÁN (Giữ nguyên bản gốc)
+# 2. HÀM TÍNH TOÁN (Giữ nguyên bản gốc của bạn)
 # ==========================================
 def calculate_indicators(df):
     if df is None or len(df) < 50: return 0, 0
@@ -87,21 +78,29 @@ def resample_stock_data(df, rule):
 # ==========================================
 def run_automated_screener():
     now_str = datetime.now().strftime('%H:%M:%S')
-    print(f"\n{'='*60}")
-    print(f"🚀 CHU KỲ QUÉT TỰ ĐỘNG MỚI [{now_str}]")
-    print(f"{'='*60}")
-
-    # dictionary để lưu trữ tổng hợp: { 'SSI': {'price': 35000, 'buy': ['1H-4H', '4H-1D'], 'sell': []} }
     summary_data = {}
+    
+    # Tạo khu vực hiển thị trạng thái
+    status_area = st.empty()
+    progress_bar = st.progress(0)
+    
+    # Tạo bot nếu có token
+    bot = None
+    if TOKEN and CHAT_ID:
+        try: bot = telebot.TeleBot(TOKEN)
+        except: pass
+
+    total_steps = len(SCAN_PAIRS) * len(SYMBOLS_TO_SCAN)
+    current_step = 0
 
     for tf1, tf2 in SCAN_PAIRS:
         tf_label = f"{tf1.upper()}-{tf2.upper()}"
-        print(f"\n🔍 Đang lọc đồng thuận: {tf_label}...")
-        dashboard_rows = []
-        total = len(SYMBOLS_TO_SCAN)
-
-        for idx, symbol in enumerate(SYMBOLS_TO_SCAN):
-            print(f" [{idx+1}/{total}] Quét: {symbol}...", end="\r")
+        
+        for symbol in SYMBOLS_TO_SCAN:
+            current_step += 1
+            progress_bar.progress(current_step / total_steps)
+            status_area.write(f"🔍 Đang lọc {tf_label}: **{symbol}**...")
+            
             try:
                 with mute_stdout():
                     q = Quote(symbol=symbol, source='VCI')
@@ -111,12 +110,12 @@ def run_automated_screener():
                             df = q.history(start=(datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d'), interval='1H')
                             df = df.rename(columns={'time':'ts','open':'o','high':'h','low':'l','close':'c','volume':'v'})
                             if tf.lower() == '1h': return df
-                            return resample_stock_data(df, '4H') if tf.lower() == '4h' else df
+                            return resample_stock_data(df, '4H')
                         else:
                             df = q.history(start='2022-01-01', interval='1D')
                             df = df.rename(columns={'time':'ts','open':'o','high':'h','low':'l','close':'c','volume':'v'})
                             if tf.lower() == '1d': return df
-                            rule_map = {'3d':'3D','1w':'W-MON','1m':'ME'}
+                            rule_map = {'3d':'3D','1w':'W-MON'}
                             return resample_stock_data(df, rule_map.get(tf.lower(), '1D'))
 
                     df1 = get_tf_data(tf1)
@@ -127,11 +126,8 @@ def run_automated_screener():
 
                     if stat1 == stat2 and stat1 != 0:
                         side = "BUY" if stat1 == 1 else "SELL"
-                        label = "MUA 🚀" if side == "BUY" else "BÁN 🔻"
                         display_price = p1 if p1 > 1000 else p1 * 1000
-                        dashboard_rows.append([symbol, f"{display_price:,.0f}", label])
-
-                        # --- PHẦN MỚI: CẬP NHẬT DỮ LIỆU TỔNG HỢP ---
+                        
                         if symbol not in summary_data:
                             summary_data[symbol] = {'price': display_price, 'buy': [], 'sell': []}
                         
@@ -139,61 +135,41 @@ def run_automated_screener():
                             summary_data[symbol]['buy'].append(tf_label)
                         else:
                             summary_data[symbol]['sell'].append(tf_label)
-                        # ------------------------------------------
 
-                        alert_key = f"{symbol}_{side}_{tf1}_{tf2}_{datetime.now().strftime('%H')}"
-                        if alert_key not in last_alerts:
-                            msg = (f"{'🚀 **MUA' if side=='BUY' else '🔻 **BÁN'} ĐỒNG THUẬN**\n\n"
-                                   f"💎 Mã: **{symbol}**\n"
-                                   f"⏱ Khung: `{tf_label}`\n"
-                                   f"💵 Giá: `{display_price:,.0f}`")
-                            bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
-                            last_alerts[alert_key] = True
-                time.sleep(0.01)
+                        # Gửi Telegram
+                        if bot:
+                            try:
+                                msg = (f"{'🚀 MUA' if side=='BUY' else '🔻 BÁN'} ĐỒNG THUẬN\n"
+                                       f"Mã: {symbol} | Khung: {tf_label} | Giá: {display_price:,.0f}")
+                                bot.send_message(CHAT_ID, msg)
+                            except: pass
             except: continue
 
-        if dashboard_rows:
-            print(f"\n✅ Kết quả {tf_label}:")
-            print(tabulate(dashboard_rows, headers=["MÃ", "GIÁ", "LỆNH"], tablefmt='grid'))
-        else:
-            print(f"\n❌ Không tìm thấy mã đồng thuận {tf_label}.")
+    status_area.empty()
+    return summary_data
 
-    # ==========================================
-    # 4. IN BẢNG TỔNG HỢP CUỐI CÙNG (PHẦN THÊM)
-    # ==========================================
-    if summary_data:
-        print(f"\n{'='*60}")
-        print(f"📊 BẢNG TỔNG HỢP TÍN HIỆU ĐỒNG THUẬN TOÀN BỘ CÁC KHUNG")
-        print(f"{'='*60}")
+# ==========================================
+# NÚT BẤM VÀ HIỂN THỊ
+# ==========================================
+if st.button("🚀 BẮT ĐẦU QUÉT TOÀN BỘ MÃ"):
+    with st.spinner("Đang tính toán RSI đồng thuận..."):
+        results = run_automated_screener()
         
-        final_rows = []
-        for sym in sorted(summary_data.keys()):
-            data = summary_data[sym]
-            # Gộp danh sách khung giờ thành chuỗi, nếu không có thì để "-"
-            buy_tfs = ", ".join(data['buy']) if data['buy'] else "-"
-            sell_tfs = ", ".join(data['sell']) if data['sell'] else "-"
+        if results:
+            st.subheader(f"📊 BẢNG TỔNG HỢP [{datetime.now().strftime('%H:%M:%S')}]")
             
-            final_rows.append([sym, f"{data['price']:,.0f}", buy_tfs, sell_tfs])
-        
-        print(tabulate(final_rows, 
-                       headers=["MÃ", "GIÁ", "ĐỒNG THUẬN MUA (🚀)", "ĐỒNG THUẬN BÁN (🔻)"], 
-                       tablefmt='grid'))
-        print(f"{'='*60}\n")
+            final_rows = []
+            for sym in sorted(results.keys()):
+                data = results[sym]
+                final_rows.append({
+                    "MÃ": sym,
+                    "GIÁ": f"{data['price']:,.0f}",
+                    "ĐỒNG THUẬN MUA (🚀)": ", ".join(data['buy']) if data['buy'] else "-",
+                    "ĐỒNG THUẬN BÁN (🔻)": ", ".join(data['sell']) if data['sell'] else "-"
+                })
+            
+            st.dataframe(pd.DataFrame(final_rows), use_container_width=True)
+        else:
+            st.warning("Không tìm thấy mã đồng thuận nào.")
 
-# ==========================================
-# 5. VÒNG LẶP CHÍNH
-# ==========================================
-if __name__ == "__main__":
-    print("==============================================")
-    print("    BỘ LỌC TỰ ĐỘNG MULTI-TF (BẢN TỔNG HỢP)")
-    print("    CHẾ ĐỘ: TỰ ĐỘNG QUÉT & GỘP KẾT QUẢ")
-    print("==============================================")
-
-    while True:
-        try:
-            run_automated_screener()
-        except Exception as e:
-            print(f"Lỗi hệ thống: {e}")
-        
-        print(f"\n💤 Đang nghỉ {WAIT_TIME/60} phút...")
-        time.sleep(WAIT_TIME)
+st.info("Hướng dẫn: Nhấn nút phía trên để bắt đầu chu kỳ quét. Code sẽ quét qua 4 cặp khung thời gian và gộp kết quả theo mã cổ phiếu.")
