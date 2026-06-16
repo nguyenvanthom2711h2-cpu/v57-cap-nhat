@@ -8,7 +8,7 @@ import time
 try:
     from vnstock import Quote
 except ImportError:
-    st.error("Cần cài đặt vnstock. Vui lòng kiểm tra file requirements.txt")
+    st.error("Thiếu thư viện vnstock. Vui lòng kiểm tra lại file requirements.txt")
 
 warnings.filterwarnings("ignore")
 
@@ -26,14 +26,12 @@ SYMBOLS = [
     'OCB','REE','CTR','VGI','VTP'
 ]
 
-# Các cặp khung giờ để kiểm tra đồng thuận
 SCAN_PAIRS = [('1h', '4h'), ('4h', '1d'), ('1d', '3d'), ('3d', '1w')]
 
 # ==========================================
 # HÀM XỬ LÝ DỮ LIỆU
 # ==========================================
 def calculate_indicators(df):
-    """Tính toán RSI đồng thuận: RSI > RSI_MA9 và RSI > RSI_MA45"""
     if df is None or len(df) < 50: return 0, 0
     try:
         df = df.copy()
@@ -53,7 +51,6 @@ def calculate_indicators(df):
     return 0, 0
 
 def resample_stock_data(df, rule):
-    """Gộp nến sang khung thời gian lớn hơn"""
     if df is None or len(df) < 2: return None
     try:
         df = df.copy()
@@ -68,95 +65,90 @@ def resample_stock_data(df, rule):
 # ==========================================
 if st.button("🚀 BẮT ĐẦU QUÉT TOÀN BỘ MÃ"):
     summary_data = {}
-    
-    # Khu vực log và tiến độ
-    log_expander = st.expander("Xem nhật ký quét chi tiết", expanded=True)
+    log_expander = st.expander("Nhật ký quét hệ thống", expanded=True)
     progress_bar = st.progress(0)
     
     total_symbols = len(SYMBOLS)
     
+    # Sử dụng nguồn 'vci' hoặc 'kbs' thay vì 'DNSE'
+    SOURCE = 'vci' 
+
     for idx, symbol in enumerate(SYMBOLS):
-        # Cập nhật tiến độ
-        progress = (idx + 1) / total_symbols
-        progress_bar.progress(progress)
-        
+        progress_bar.progress((idx + 1) / total_symbols)
         with log_expander:
             st.write(f"🔄 Đang xử lý: **{symbol}**...")
 
         try:
-            # 1. Lấy dữ liệu nguồn (Dùng DNSE cho ổn định)
-            q = Quote(symbol=symbol, source='DNSE')
+            q = Quote(symbol=symbol, source=SOURCE)
             
-            # Khung giờ: Lấy 90 ngày gần nhất
+            # Lấy dữ liệu 1H và 1D
             df_h_raw = q.history(start=(datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d'), interval='1H')
-            df_h_raw = df_h_raw.rename(columns={'time':'ts','open':'o','high':'h','low':'l','close':'c','volume':'v'})
-            
-            # Khung ngày: Lấy từ 2022 để đủ nến gộp khung Tuần
             df_d_raw = q.history(start='2022-01-01', interval='1D')
-            df_d_raw = df_d_raw.rename(columns={'time':'ts','open':'o','high':'h','low':'l','close':'c','volume':'v'})
 
-            if df_h_raw.empty or df_d_raw.empty:
+            # Chuẩn hóa tên cột (Vnstock thường dùng: time, open, high, low, close, volume)
+            def clean_df(df):
+                if df is not None and not df.empty:
+                    return df.rename(columns={'time':'ts','open':'o','high':'h','low':'l','close':'c','volume':'v'})
+                return None
+
+            df_h = clean_df(df_h_raw)
+            df_d = clean_df(df_d_raw)
+
+            if df_h is None and df_d is None:
                 continue
 
-            # 2. Tạo các khung thời gian
+            # Tạo danh sách các khung thời gian từ dữ liệu đã lấy
             tfs = {
-                '1h': df_h_raw,
-                '4h': resample_stock_data(df_h_raw, '4H'),
-                '1d': df_d_raw,
-                '3d': resample_stock_data(df_d_raw, '3D'),
-                '1w': resample_stock_data(df_d_raw, 'W-MON')
+                '1h': df_h,
+                '4h': resample_stock_data(df_h, '4H'),
+                '1d': df_d,
+                '3d': resample_stock_data(df_d, '3D'),
+                '1w': resample_stock_data(df_d, 'W-MON')
             }
 
-            # 3. Tính tín hiệu cho từng khung
+            # Tính tín hiệu
             signals = {}
-            last_price = 0
+            current_price = 0
             for tf_name, df_tf in tfs.items():
-                sig, price = calculate_indicators(df_tf)
+                sig, p = calculate_indicators(df_tf)
                 signals[tf_name] = sig
-                if tf_name == '1h': last_price = price
+                if tf_name == '1h' and p > 0: current_price = p
+                elif current_price == 0 and p > 0: current_price = p
 
-            # 4. So sánh các cặp đồng thuận
+            # Kiểm tra đồng thuận
             for tf1, tf2 in SCAN_PAIRS:
-                s1 = signals.get(tf1, 0)
-                s2 = signals.get(tf2, 0)
-
+                s1, s2 = signals.get(tf1, 0), signals.get(tf2, 0)
                 if s1 == s2 and s1 != 0:
-                    pair_label = f"{tf1.upper()}-{tf2.upper()}"
-                    display_p = last_price if last_price > 1000 else last_price * 1000
+                    label = f"{tf1.upper()}-{tf2.upper()}"
+                    # Quy đổi giá nếu cần (ví dụ giá 35.5 -> 35,500)
+                    price_display = current_price if current_price > 1000 else current_price * 1000
                     
                     if symbol not in summary_data:
-                        summary_data[symbol] = {'price': display_p, 'buy': [], 'sell': []}
+                        summary_data[symbol] = {'price': price_display, 'buy': [], 'sell': []}
                     
-                    if s1 == 1:
-                        summary_data[symbol]['buy'].append(pair_label)
-                    else:
-                        summary_data[symbol]['sell'].append(pair_label)
+                    if s1 == 1: summary_data[symbol]['buy'].append(label)
+                    else: summary_data[symbol]['sell'].append(label)
             
-            # Nghỉ ngắn để tránh bị API chặn
+            # Nghỉ rất ngắn để tránh bị server chặn IP
             time.sleep(0.1)
-            
+
         except Exception as e:
             with log_expander:
-                st.error(f"❌ Lỗi tại mã {symbol}: {e}")
+                st.error(f"❌ {symbol}: {str(e)}")
             continue
 
-    # ==========================================
-    # HIỂN THỊ KẾT QUẢ
-    # ==========================================
     st.divider()
     if summary_data:
-        st.subheader(f"📊 BẢNG TỔNG HỢP TÍN HIỆU [{datetime.now().strftime('%H:%M:%S')}]")
-        
-        final_rows = []
-        for sym in sorted(summary_data.keys()):
-            data = summary_data[sym]
-            final_rows.append({
-                "MÃ": sym,
-                "GIÁ HIỆN TẠI": f"{data['price']:,.0f}",
-                "ĐỒNG THUẬN MUA (🚀)": ", ".join(data['buy']) if data['buy'] else "-",
-                "ĐỒNG THUẬN BÁN (🔻)": ", ".join(data['sell']) if data['sell'] else "-"
+        st.subheader(f"📊 Bảng Kết Quả Tổng Hợp ({datetime.now().strftime('%H:%M:%S')})")
+        rows = []
+        for s in sorted(summary_data.keys()):
+            d = summary_data[s]
+            rows.append({
+                "MÃ": s,
+                "GIÁ": f"{d['price']:,.0f}",
+                "ĐỒNG THUẬN MUA (🚀)": ", ".join(d['buy']) if d['buy'] else "-",
+                "ĐỒNG THUẬN BÁN (🔻)": ", ".join(d['sell']) if d['sell'] else "-"
             })
-        
-        st.dataframe(pd.DataFrame(final_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     else:
-        st.error("⚠️ Không tìm thấy tín hiệu đồng thuận nào. Vui lòng thử lại sau ít phút hoặc kiểm tra kết nối internet.")
+        st.warning("⚠️ Đã quét xong nhưng không có mã nào đạt điều kiện đồng thuận tại thời điểm này.")
