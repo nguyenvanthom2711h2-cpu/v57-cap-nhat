@@ -7,12 +7,12 @@ import time
 # --- CẤU HÌNH GIAO DIỆN ---
 st.set_page_config(page_title="VN Stock Yahoo Finance", layout="wide")
 st.title("🚀 Bộ Lọc Chứng Khoán Việt Nam (Nguồn Yahoo Finance)")
-st.caption("Giải pháp chạy ổn định 100% trên Web Streamlit Cloud")
+st.caption("Dữ liệu lấy từ Yahoo Finance - Không bị chặn IP Streamlit Cloud")
 
-# DANH SÁCH MÃ (Tự động thêm đuôi .VN)
+# DANH SÁCH MÃ CHỨNG KHOÁN VN
 SYMBOLS_RAW = [
     'ACB','BID','CTG','FPT','GAS','GVR','HDB','HPG','MBB','MSN','MWG','SSI','STB','TCB','VCB','VHM','VIC','VNM','VPB','VRE',
-    'DGC','DPM','DCM','VGC','PVD','PVS','NLG','KDH','KBC','IDC','SZC','GMD','HAH','OIL','FRT','PNJ'
+    'DGC','DPM','DCM','VGC','PVD','PVS','NLG','KDH','KBC','IDC','SZC','GMD','HAH','OIL','FRT','PNJ','HSG','NKG','DIG','DXG'
 ]
 SYMBOLS = [s + ".VN" for s in SYMBOLS_RAW]
 
@@ -20,6 +20,7 @@ SYMBOLS = [s + ".VN" for s in SYMBOLS_RAW]
 def calculate_rsi_logic(df):
     if df is None or len(df) < 50: return 0, 0
     try:
+        # Lấy cột giá đóng cửa
         close = df['Close']
         delta = close.diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
@@ -27,10 +28,13 @@ def calculate_rsi_logic(df):
         rs = gain / loss
         rsi = 100 - (100 / (1 + rs))
         
+        # Tính MA cho RSI
         ma9 = rsi.rolling(9).mean()
         ma45 = rsi.rolling(45).mean()
         
-        last_rsi, last_ma9, last_ma45 = rsi.iloc[-1], ma9.iloc[-1], ma45.iloc[-1]
+        last_rsi = rsi.iloc[-1]
+        last_ma9 = ma9.iloc[-1]
+        last_ma45 = ma45.iloc[-1]
         
         if last_rsi > last_ma9 and last_rsi > last_ma45: return 1, close.iloc[-1]
         if last_rsi < last_ma9 and last_rsi < last_ma45: return -1, close.iloc[-1]
@@ -52,17 +56,16 @@ if st.button("🔍 BẮT ĐẦU QUÉT"):
     
     for i, sym in enumerate(SYMBOLS):
         short_name = sym.replace(".VN", "")
-        status_text.info(f"🔄 Đang tải dữ liệu: **{short_name}**")
+        status_text.info(f"🔄 Đang quét: **{short_name}**")
         progress_bar.progress((i + 1) / len(SYMBOLS))
         
         try:
-            # Lấy dữ liệu từ Yahoo Finance (Khung 1 giờ và 1 ngày)
-            # Khung 1h của Yahoo chỉ cho phép lấy tối đa 730 ngày
+            # Tải dữ liệu từ Yahoo Finance (Khung 1h và 1d)
+            # Dùng period="60d" để lấy nến 1h, period="2y" để lấy nến 1d
             data_1h = yf.download(sym, period="60d", interval="1h", progress=False)
             data_1d = yf.download(sym, period="2y", interval="1d", progress=False)
 
             if not data_1h.empty and not data_1d.empty:
-                # Chuẩn bị các khung thời gian
                 tfs = {
                     '1h': data_1h,
                     '4h': resample_data(data_1h, '4h'),
@@ -77,13 +80,12 @@ if st.button("🔍 BẮT ĐẦU QUÉT"):
                 buy, sell = [], []
                 pairs = [('1h', '4h'), ('4h', '1d'), ('1d', '3d'), ('3d', '1w')]
                 for tf1, tf2 in pairs:
-                    if sigs[tf1] == sigs[tf2] and sigs[tf1] != 0:
+                    if sigs.get(tf1) == sigs.get(tf2) and sigs.get(tf1) != 0:
                         lbl = f"{tf1.upper()}-{tf2.upper()}"
                         if sigs[tf1] == 1: buy.append(lbl)
                         else: sell.append(lbl)
                 
                 if buy or sell:
-                    # Yahoo Finance trả về giá chuẩn (ví dụ 35000), không cần nhân 1000
                     results.append({
                         "MÃ": short_name,
                         "GIÁ": f"{price:,.0f}",
@@ -98,7 +100,7 @@ if st.button("🔍 BẮT ĐẦU QUÉT"):
         st.subheader(f"📊 Kết Quả Đồng Thuận ({datetime.now().strftime('%H:%M:%S')})")
         st.dataframe(pd.DataFrame(results), use_container_width=True, hide_index=True)
     else:
-        st.warning("Không tìm thấy mã nào đạt điều kiện hoặc Yahoo Finance đang bảo trì.")
+        st.warning("Không tìm thấy mã nào đạt điều kiện đồng thuận.")
 
 st.divider()
-st.info("💡 Tại sao dùng Yahoo Finance? Vì Yahoo là máy chủ quốc tế, họ không chặn địa chỉ IP của Streamlit Cloud như các công ty chứng khoán VN.")
+st.info("💡 Lưu ý: Yahoo Finance cập nhật giá chậm hơn bảng điện thực tế khoảng 15 phút.")
