@@ -7,7 +7,7 @@ import time
 # --- CẤU HÌNH GIAO DIỆN ---
 st.set_page_config(page_title="VN Stock Yahoo Finance", layout="wide")
 st.title("🚀 Bộ Lọc Chứng Khoán Việt Nam (Nguồn Yahoo Finance)")
-st.caption("Dữ liệu lấy từ Yahoo Finance - Không bị chặn IP Streamlit Cloud")
+st.caption("Dữ liệu lấy từ Yahoo Finance - Tối ưu hiển thị kết quả")
 
 # DANH SÁCH MÃ CHỨNG KHOÁN VN
 SYMBOLS_RAW = [
@@ -16,19 +16,27 @@ SYMBOLS_RAW = [
 ]
 SYMBOLS = [s + ".VN" for s in SYMBOLS_RAW]
 
-# --- HÀM TÍNH TOÁN RSI ---
+# --- HÀM TÍNH TOÁN RSI (SỬ DỤNG EMA ĐỂ NHẠY HƠN) ---
 def calculate_rsi_logic(df):
     if df is None or len(df) < 50: return 0, 0
     try:
-        # Lấy cột giá đóng cửa
-        close = df['Close']
+        # Xử lý lấy cột Close bất kể định dạng Yahoo
+        if isinstance(df.columns, pd.MultiIndex):
+            close = df.xs('Close', axis=1, level=0).iloc[:, 0]
+        else:
+            close = df['Close']
+            
         delta = close.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        
+        # Dùng EWM (Exponential) để giống RSI chuẩn của TradingView hơn
+        avg_gain = gain.ewm(com=13, adjust=False).mean()
+        avg_loss = loss.ewm(com=13, adjust=False).mean()
+        
+        rs = avg_gain / avg_loss
         rsi = 100 - (100 / (1 + rs))
         
-        # Tính MA cho RSI
         ma9 = rsi.rolling(9).mean()
         ma45 = rsi.rolling(45).mean()
         
@@ -44,7 +52,14 @@ def calculate_rsi_logic(df):
 # --- HÀM GỘP NẾN ---
 def resample_data(df, rule):
     try:
-        res = df.resample(rule).agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'})
+        # Xử lý nến cho Yahoo Multi-index
+        if isinstance(df.columns, pd.MultiIndex):
+            df_flat = df.copy()
+            df_flat.columns = df_flat.columns.get_level_values(0)
+        else:
+            df_flat = df
+            
+        res = df_flat.resample(rule).agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'})
         return res.dropna()
     except: return None
 
@@ -54,28 +69,34 @@ if st.button("🔍 BẮT ĐẦU QUÉT"):
     progress_bar = st.progress(0)
     status_text = st.empty()
     
+    found_count = 0
+    
     for i, sym in enumerate(SYMBOLS):
         short_name = sym.replace(".VN", "")
-        status_text.info(f"🔄 Đang quét: **{short_name}**")
+        status_text.info(f"🔄 Đang quét: **{short_name}** (Tìm thấy: {found_count})")
         progress_bar.progress((i + 1) / len(SYMBOLS))
         
         try:
-            # Tải dữ liệu từ Yahoo Finance (Khung 1h và 1d)
-            # Dùng period="60d" để lấy nến 1h, period="2y" để lấy nến 1d
+            # Tải dữ liệu (Lấy thêm dữ liệu để tính toán RSI 45 chính xác hơn)
             data_1h = yf.download(sym, period="60d", interval="1h", progress=False)
             data_1d = yf.download(sym, period="2y", interval="1d", progress=False)
 
             if not data_1h.empty and not data_1d.empty:
                 tfs = {
                     '1h': data_1h,
-                    '4h': resample_data(data_1h, '4h'),
+                    '4h': resample_data(data_1h, '4H'),
                     '1d': data_1d,
                     '3d': resample_data(data_1d, '3D'),
                     '1w': resample_data(data_1d, 'W-MON')
                 }
                 
                 sigs = {name: calculate_rsi_logic(tf_df)[0] for name, tf_df in tfs.items()}
-                price = data_1d['Close'].iloc[-1]
+                
+                # Lấy giá hiện tại
+                if isinstance(data_1d.columns, pd.MultiIndex):
+                    price = data_1d.xs('Close', axis=1, level=0).iloc[-1, 0]
+                else:
+                    price = data_1d['Close'].iloc[-1]
                 
                 buy, sell = [], []
                 pairs = [('1h', '4h'), ('4h', '1d'), ('1d', '3d'), ('3d', '1w')]
@@ -86,6 +107,7 @@ if st.button("🔍 BẮT ĐẦU QUÉT"):
                         else: sell.append(lbl)
                 
                 if buy or sell:
+                    found_count += 1
                     results.append({
                         "MÃ": short_name,
                         "GIÁ": f"{price:,.0f}",
@@ -94,13 +116,15 @@ if st.button("🔍 BẮT ĐẦU QUÉT"):
                     })
         except:
             continue
+        # Nghỉ cực ngắn để ổn định
+        time.sleep(0.05)
 
     status_text.empty()
     if results:
-        st.subheader(f"📊 Kết Quả Đồng Thuận ({datetime.now().strftime('%H:%M:%S')})")
+        st.success(f"✅ Đã tìm thấy {len(results)} mã đạt điều kiện!")
         st.dataframe(pd.DataFrame(results), use_container_width=True, hide_index=True)
     else:
-        st.warning("Không tìm thấy mã nào đạt điều kiện đồng thuận.")
+        st.warning("⚠️ Hiện tại không có mã nào có sự đồng thuận RSI trên các khung giờ đã chọn.")
 
 st.divider()
-st.info("💡 Lưu ý: Yahoo Finance cập nhật giá chậm hơn bảng điện thực tế khoảng 15 phút.")
+st.info("💡 Mẹo: Nếu không thấy mã nào, có thể thị trường đang đi ngang. Bạn có thể quay lại kiểm tra vào phiên chiều hoặc ngày mai.")
