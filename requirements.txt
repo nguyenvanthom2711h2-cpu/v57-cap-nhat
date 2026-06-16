@@ -1,3 +1,3 @@
-vnstock3
+vnstock
 pandas
 streamlit
