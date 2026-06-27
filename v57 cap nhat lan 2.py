@@ -10,11 +10,11 @@ from scipy.signal import argrelextrema
 warnings.filterwarnings("ignore")
 
 # --- CẤU HÌNH GIAO DIỆN ---
-st.set_page_config(page_title="VN Stock Consensus v150", layout="wide")
+st.set_page_config(page_title="VN Stock Consensus v151", layout="wide")
 st.title("🚀 Bộ Lọc Đồng Thuận & Phân Kỳ RSI")
-st.caption("Dữ liệu Yahoo Finance | RSI Wilder's | Phát hiện Phân kỳ/Hội tụ")
+st.caption("Dữ liệu Yahoo Finance | RSI Wilder's | Đã sửa lỗi hiển thị v151")
 
-# DANH SÁCH MÃ CHỨNG KHOÁN (Giữ nguyên của bạn)
+# DANH SÁCH MÃ CHỨNG KHOÁN (Giữ nguyên bản gốc)
 SYMBOLS_RAW = [
     'ACB','BID','CTG','HDB','LPB','MBB','MSB','OCB','SHB','STB','TCB','TPB','VCB','VIB','VPB','EIB','SSB','ABB','BVB',
     'SSI','VND','VCI','HCM','VIX','BSI','FTS','MBS','SHS','CTS','AGR','ORS','VDS','TVS',
@@ -33,40 +33,35 @@ SYMBOLS = [s + ".VN" for s in SYMBOLS_RAW]
 SCAN_PAIRS = [('1h', '4h'), ('4h', '1d'), ('1d', '3d'), ('3d', '1w')]
 
 # ==========================================
-# 1. HÀM PHÁT HIỆN PHÂN KỲ (BỔ SUNG MỚI)
+# 1. HÀM PHÁT HIỆN PHÂN KỲ (Logic chính xác)
 # ==========================================
 def detect_rsi_divergence(df, order=5):
-    """
-    Phát hiện Phân kỳ (Bearish) và Hội tụ (Bullish)
-    """
     if df is None or len(df) < 35: return ""
-    
-    # Lấy dữ liệu giá đóng cửa và RSI
-    close = df['c'].values
-    rsi = df['rsi'].values
-    
-    # Tìm đỉnh/đáy cục bộ
-    peaks = argrelextrema(rsi, np.greater, order=order)[0]
-    troughs = argrelextrema(rsi, np.less, order=order)[0]
-    
-    # Kiểm tra Hội tụ (Bullish Divergence) - Đáy
-    if len(troughs) >= 2:
-        t1, t2 = troughs[-2], troughs[-1]
-        # Giá tạo đáy thấp hơn, RSI tạo đáy cao hơn
-        if close[t2] < close[t1] and rsi[t2] > rsi[t1]:
-            if (len(df) - 1 - t2) < 8: return "HỘI TỤ (MUA) 🚀"
-            
-    # Kiểm tra Phân kỳ (Bearish Divergence) - Đỉnh
-    if len(peaks) >= 2:
-        p1, p2 = peaks[-2], peaks[-1]
-        # Giá tạo đỉnh cao hơn, RSI tạo đỉnh thấp hơn
-        if close[p2] > close[p1] and rsi[p2] < rsi[p1]:
-            if (len(df) - 1 - p2) < 8: return "PHÂN KỲ (BÁN) 📉"
-            
-    return ""
+    try:
+        # Lấy mảng giá và RSI
+        close = df['c'].values
+        rsi = df['rsi'].values
+        
+        # Tìm đỉnh/đáy của RSI
+        peaks = argrelextrema(rsi, np.greater, order=order)[0]
+        troughs = argrelextrema(rsi, np.less, order=order)[0]
+        
+        # Kiểm tra Hội tụ (Bullish Divergence) - Đáy
+        if len(troughs) >= 2:
+            t1, t2 = troughs[-2], troughs[-1]
+            if close[t2] < close[t1] and rsi[t2] > rsi[t1]:
+                if (len(df) - 1 - t2) < 10: return "HỘI TỤ (MUA) 🚀"
+                
+        # Kiểm tra Phân kỳ (Bearish Divergence) - Đỉnh
+        if len(peaks) >= 2:
+            p1, p2 = peaks[-2], peaks[-1]
+            if close[p2] > close[p1] and rsi[p2] < rsi[p1]:
+                if (len(df) - 1 - p2) < 10: return "PHÂN KỲ (BÁN) 📉"
+        return ""
+    except: return ""
 
 # ==========================================
-# 2. HÀM TÍNH TOÁN (Cập nhật từ bản gốc)
+# 2. HÀM TÍNH TOÁN (Giữ nguyên logic gốc của bạn)
 # ==========================================
 def calculate_indicators(df):
     if df is None or len(df) < 50: return 0, 0, ""
@@ -77,6 +72,7 @@ def calculate_indicators(df):
         delta = df['c'].diff()
         gain = delta.clip(lower=0); loss = -delta.clip(upper=0)
         
+        # Công thức alpha=1/14 chuẩn Wilder's của bạn
         avg_gain = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
         avg_loss = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
         
@@ -84,14 +80,13 @@ def calculate_indicators(df):
         df['rsi9'] = df['rsi'].rolling(9).mean()
         df['rsi45'] = df['rsi'].rolling(45).mean()
         
-        # Gọi hàm phát hiện phân kỳ
+        # Tính phân kỳ
         div_status = detect_rsi_divergence(df)
         
         last = df.iloc[-1]
         status = 0
         if last['rsi'] > last['rsi9'] and last['rsi'] > last['rsi45']: status = 1
         elif last['rsi'] < last['rsi9'] and last['rsi'] < last['rsi45']: status = -1
-        
         return status, last['c'], div_status
     except: return 0, 0, ""
 
@@ -102,8 +97,7 @@ def resample_stock_data(df, rule):
     if df is None or len(df) < 2: return None
     try:
         df = df.copy()
-        if 'ts' not in df.columns:
-            df['ts'] = df.index
+        if 'ts' not in df.columns: df['ts'] = df.index
         df['ts'] = pd.to_datetime(df['ts'])
         df.set_index('ts', inplace=True)
         logic = {'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'}
@@ -115,7 +109,7 @@ def resample_stock_data(df, rule):
 # ==========================================
 # 4. QUY TRÌNH QUÉT
 # ==========================================
-if st.button("🔍 BẮT ĐẦU QUÉT ĐỒNG THUẬN & PHÂN KỲ"):
+if st.button("🔍 BẮT ĐẦU QUÉT"):
     summary_data = {}
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -150,22 +144,20 @@ if st.button("🔍 BẮT ĐẦU QUÉT ĐỒNG THUẬN & PHÂN KỲ"):
                     stat, p, div = calculate_indicators(df_tf)
                     sigs[name] = stat
                     prices[name] = p
-                    divs[name] = div # Lưu trạng thái phân kỳ từng khung
+                    divs[name] = div
                 
-                # Kiểm tra đồng thuận (giữ nguyên logic gốc)
+                # Kiểm tra đồng thuận
                 for tf1, tf2 in SCAN_PAIRS:
                     if sigs.get(tf1) == sigs.get(tf2) and sigs.get(tf1) != 0:
                         side = "BUY" if sigs[tf1] == 1 else "SELL"
                         p_val = prices['1h'] if prices['1h'] > 1000 else prices['1h'] * 1000
                         
                         if short_name not in summary_data:
-                            # Lấy phân kỳ của khung Ngày (1D) làm chuẩn hiển thị
                             summary_data[short_name] = {'p': p_val, 'buy': [], 'sell': [], 'div': divs['1d']}
                         
                         label = f"{tf1.upper()}-{tf2.upper()}"
                         if side == "BUY": summary_data[short_name]['buy'].append(label)
                         else: summary_data[short_name]['sell'].append(label)
-            
             time.sleep(0.01)
         except: continue
 
@@ -183,14 +175,21 @@ if st.button("🔍 BẮT ĐẦU QUÉT ĐỒNG THUẬN & PHÂN KỲ"):
                 "PHÂN KỲ RSI (1D)": d['div'] if d['div'] else "-"
             })
         
-        # Style màu sắc cho cột phân kỳ
         df_final = pd.DataFrame(final_rows)
+
+        # Hàm định dạng màu (Sửa lỗi AttributeError)
         def color_div(val):
-            if 'HỘI TỤ' in val: return 'color: #00ff88; font-weight: bold'
-            if 'PHÂN KỲ' in val: return 'color: #ff4444; font-weight: bold'
+            if 'HỘI TỤ' in str(val): return 'color: #00ff88; font-weight: bold;'
+            if 'PHÂN KỲ' in str(val): return 'color: #ff4444; font-weight: bold;'
             return ''
-        
-        st.dataframe(df_final.style.applymap(color_div, subset=['PHÂN KỲ RSI (1D)']), 
-                     use_container_width=True, hide_index=True)
+
+        # Sử dụng .map() (thay cho .applymap() đã bị loại bỏ ở Pandas mới)
+        try:
+            styled_df = df_final.style.map(color_div, subset=['PHÂN KỲ RSI (1D)'])
+        except:
+            # Phòng trường hợp phiên bản pandas cũ hơn nữa
+            styled_df = df_final.style.applymap(color_div, subset=['PHÂN KỲ RSI (1D)'])
+            
+        st.dataframe(styled_df, use_container_width=True, hide_index=True)
     else:
         st.warning("Không tìm thấy mã nào đồng thuận.")
