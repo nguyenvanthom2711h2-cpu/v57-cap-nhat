@@ -9,24 +9,23 @@ from scipy.signal import argrelextrema
 
 warnings.filterwarnings("ignore")
 
-# --- CẤU HÌNH GIAO DIỆN ---
-st.set_page_config(page_title="VN Stock Consensus v158", layout="wide")
+# --- CẤU HÌNH GIAO DIỆN CSS ---
+st.set_page_config(page_title="VN Stock Consensus v159", layout="wide")
 st.markdown("""
     <style>
-    .reportview-container { background: #0e1117; }
     .main-table { width: 100%; border-collapse: collapse; color: white; background-color: #161a25; }
     .main-table th { background-color: #1f2635; color: #9eb1d1; padding: 12px; text-align: left; border-bottom: 2px solid #2d3748; }
-    .main-table td { padding: 10px; border-bottom: 1px solid #2d3748; font-family: 'Courier New', Courier, monospace; }
-    .up-color { color: #00ff88; font-weight: bold; }
-    .down-color { color: #ff4444; font-weight: bold; }
-    .vni-row { background-color: #1e293b; }
+    .main-table td { padding: 10px; border-bottom: 1px solid #2d3748; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 13px; }
+    .up-color { color: #00ff88 !important; font-weight: bold; }
+    .down-color { color: #ff4444 !important; font-weight: bold; }
+    .vni-row { background-color: #1e293b; border-left: 5px solid #00ffcc; }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 Bộ Lọc Đồng Thuận & MA Đa Khung v158")
-st.caption("Dữ liệu Yahoo Finance | Mũi tên Xanh/Đỏ chuẩn xác | VN-INDEX cố định")
+st.title("🚀 Master Stock Scanner v159")
+st.caption("Dữ liệu Yahoo Finance | Đồng bộ màu sắc Chữ & Mũi tên | VN-INDEX cố định")
 
-# DANH SÁCH MÃ CHỨNG KHOÁN (Giữ nguyên)
+# DANH SÁCH MÃ CHỨNG KHOÁN (Giữ nguyên gốc)
 SYMBOLS_RAW = [
     '^VNINDEX',
     'ACB','BID','CTG','HDB','LPB','MBB','MSB','OCB','SHB','STB','TCB','TPB','VCB','VIB','VPB','EIB','SSB','ABB','BVB',
@@ -46,7 +45,7 @@ SYMBOLS = [s if s.startswith('^') else s + ".VN" for s in SYMBOLS_RAW]
 SCAN_PAIRS = [('1h', '4h'), ('4h', '1d'), ('1d', '3d'), ('3d', '1w')]
 
 # ==========================================
-# 1. HÀM PHÁT HIỆN PHÂN KỲ (Đã thêm HTML màu)
+# 1. HÀM PHÁT HIỆN PHÂN KỲ (Đồng bộ màu)
 # ==========================================
 def detect_div_html(df, tf_name, order=5):
     try:
@@ -59,17 +58,17 @@ def detect_div_html(df, tf_name, order=5):
             t1, t2 = troughs[-2], troughs[-1]
             if close[t2] < close[t1] and rsi[t2] > rsi[t1]:
                 if (len(df) - 1 - t2) < 8: 
-                    return f"{tf_name}:<span class='up-color'>HỘI TỤ 🚀</span>"
+                    return f"<span class='up-color'>{tf_name}:HỘI TỤ 🚀</span>"
         if len(peaks) >= 2:
             p1, p2 = peaks[-2], peaks[-1]
             if close[p2] > close[p1] and rsi[p2] < rsi[p1]:
                 if (len(df) - 1 - p2) < 8: 
-                    return f"{tf_name}:<span class='down-color'>PHÂN KỲ 📉</span>"
+                    return f"<span class='down-color'>{tf_name}:PHÂN KỲ 📉</span>"
         return None
     except: return None
 
 # ==========================================
-# 2. HÀM TÍNH TOÁN (Giữ nguyên logic MA/RSI)
+# 2. HÀM TÍNH TOÁN (Đồng bộ màu Chữ & Mũi tên)
 # ==========================================
 def calculate_indicators(df, tf_name):
     if df is None or len(df) < 50: return 0, 0, None, "", ""
@@ -87,12 +86,20 @@ def calculate_indicators(df, tf_name):
         df['ma50'] = df['c'].rolling(50).mean()
         
         last = df.iloc[-1]
+        t_upper = tf_name.upper()
         
-        # HTML màu cho mũi tên MA
-        m50_label = f"{tf_name.upper()}<span class='up-color'>↑</span>" if last['c'] > last['ma50'] else f"{tf_name.upper()}<span class='down-color'>↓</span>"
-        m1020_label = f"{tf_name.upper()}<span class='up-color'>↑</span>" if last['ma10'] > last['ma20'] else f"{tf_name.upper()}<span class='down-color'>↓</span>"
+        # Bọc cả Tên khung và Mũi tên vào trong class màu
+        if last['c'] > last['ma50']:
+            m50_label = f"<span class='up-color'>{t_upper}↑</span>"
+        else:
+            m50_label = f"<span class='down-color'>{t_upper}↓</span>"
+            
+        if last['ma10'] > last['ma20']:
+            m1020_label = f"<span class='up-color'>{t_upper}↑</span>"
+        else:
+            m1020_label = f"<span class='down-color'>{t_upper}↓</span>"
         
-        div_msg = detect_div_html(df, tf_name.upper())
+        div_msg = detect_div_html(df, t_upper)
         status_rsi = 0
         if last['rsi'] > last['rsi9'] and last['rsi'] > last['rsi45']: status_rsi = 1
         elif last['rsi'] < last['rsi9'] and last['rsi'] < last['rsi45']: status_rsi = -1
@@ -119,7 +126,7 @@ def resample_stock_data(df, rule):
 # ==========================================
 # 4. QUY TRÌNH QUÉT
 # ==========================================
-if st.button("🔍 BẮT ĐẦU QUÉT"):
+if st.button("🔍 BẮT ĐẦU QUÉT HỆ THỐNG"):
     summary_data = {}
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -188,11 +195,11 @@ if st.button("🔍 BẮT ĐẦU QUÉT"):
 
         for s in order:
             d = summary_data[s]
-            row_class = "class='vni-row'" if d['is_vni'] else ""
-            name_label = f"⭐ {s}" if d['is_vni'] else s
+            row_style = "class='vni-row'" if d['is_vni'] else ""
+            name_label = f"⭐ <b>{s}</b>" if d['is_vni'] else s
             price_label = f"{d['p']:,.2f}" if d['is_vni'] else f"{d['p']:,.0f}"
             
-            html_table += f"<tr {row_class}>"
+            html_table += f"<tr {row_style}>"
             html_table += f"<td>{name_label}</td>"
             html_table += f"<td>{price_label}</td>"
             html_table += f"<td>{' | '.join(d['buy']) if d['buy'] else '-'}</td>"
@@ -205,4 +212,4 @@ if st.button("🔍 BẮT ĐẦU QUÉT"):
         html_table += "</tbody></table>"
         st.write(html_table, unsafe_allow_html=True)
     else:
-        st.warning("Không tìm thấy mã nào.")
+        st.warning("Không tìm thấy mã nào thỏa mãn điều kiện lọc.")
